@@ -1,0 +1,358 @@
+import mysql.connector
+import tkinter as tk
+from tkinter import messagebox
+from tkinter import ttk
+from tkinter import filedialog  # Import filedialog module
+import pandas as pd
+from datetime import datetime
+
+# Database connection
+def connect_to_db():
+    try:
+        connection = mysql.connector.connect(
+            host="127.0.0.1",
+            user="root",
+            password="******",
+            database="school_management",
+            port=3306
+        )
+        return connection
+    except mysql.connector.Error as err:
+        messagebox.showerror("Error", f"Failed to connect to database: {err}")
+        return None
+
+mydb = connect_to_db()
+if mydb:
+    mycursor = mydb.cursor()
+
+# Create students table if not exists
+def create_students_table():
+    try:
+        mycursor.execute("""
+        CREATE TABLE IF NOT EXISTS students (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            name VARCHAR(255),
+            class VARCHAR(255),
+            section VARCHAR(255),
+            admission_date DATE,
+            total_paid DECIMAL(10,2) DEFAULT 0.00,
+            total_fees DECIMAL(10,2) DEFAULT 0.00
+        );
+        """)
+        mydb.commit()
+    except mysql.connector.Error as err:
+        messagebox.showerror("Error", f"Failed to create table: {err}")
+
+# Helper function for input validation
+def validate_student_input(name, class_, section, admission_date):
+    if not name or not class_ or not section or not admission_date:
+        return "All fields are required."
+    try:
+        datetime.strptime(admission_date, '%Y-%m-%d')
+    except ValueError:
+        return "Incorrect date format. Use YYYY-MM-DD."
+    return None
+
+# Function to add a new student
+def add_student():
+    input_window = tk.Toplevel(root)
+    input_window.title("Add Student")
+
+    def add_student_action():
+        name = student_name_entry.get()
+        class_ = class_entry.get()
+        section = section_entry.get()
+        admission_date = admission_date_entry.get()
+
+        error = validate_student_input(name, class_, section, admission_date)
+        if error:
+            messagebox.showerror("Error", error)
+            return
+
+        try:
+            sql = "INSERT INTO students (name, class, section, admission_date) VALUES (%s, %s, %s, %s)"
+            val = (name, class_, section, admission_date)
+            mycursor.execute(sql, val)
+            mydb.commit()
+
+            messagebox.showinfo("Success", "Student added successfully!")
+            input_window.destroy()
+            view_students()
+        except mysql.connector.Error as err:
+            mydb.rollback()
+            messagebox.showerror("Error", f"Failed to add student: {err}")
+
+    # Labels and entry fields for student
+    student_name_label = tk.Label(input_window, text="Student Name")
+    student_name_entry = tk.Entry(input_window)
+    class_label = tk.Label(input_window, text="Class")
+    class_entry = tk.Entry(input_window)
+    section_label = tk.Label(input_window, text="Section")
+    section_entry = tk.Entry(input_window)
+    admission_date_label = tk.Label(input_window, text="Admission Date (YYYY-MM-DD)")
+    admission_date_entry = tk.Entry(input_window)
+    add_button = tk.Button(input_window, text="Add Student", command=add_student_action)
+
+    # Layout in the input window
+    student_name_label.grid(row=0, column=0)
+    student_name_entry.grid(row=0, column=1)
+    class_label.grid(row=1, column=0)
+    class_entry.grid(row=1, column=1)
+    section_label.grid(row=2, column=0)
+    section_entry.grid(row=2, column=1)
+    admission_date_label.grid(row=3, column=0)
+    admission_date_entry.grid(row=3, column=1)
+    add_button.grid(row=4, column=0, columnspan=2)
+
+# Function to update student fees
+def update_fees():
+    input_window = tk.Toplevel(root)
+    input_window.title("Update Fees")
+
+    def update_fees_action():
+        student_id = student_id_update_entry.get()
+        total_paid = total_paid_entry.get()
+        total_fees = total_fees_entry.get()
+
+        if not student_id.isdigit():
+            messagebox.showerror("Error", "Please enter a valid student ID.")
+            return
+
+        try:
+            total_paid = float(total_paid) if total_paid else 0.0
+            total_fees = float(total_fees) if total_fees else 0.0
+
+            sql = "UPDATE students SET total_paid = %s, total_fees = %s WHERE id = %s"
+            val = (total_paid, total_fees, student_id)
+            mycursor.execute(sql, val)
+
+            if mycursor.rowcount == 0:
+                mydb.rollback()
+                messagebox.showerror("Error", "Student ID does not exist or no changes were made.")
+            else:
+                mydb.commit()
+                messagebox.showinfo("Success", "Fees updated successfully!")
+                input_window.destroy()
+                view_students()
+
+        except mysql.connector.Error as err:
+            mydb.rollback()
+            messagebox.showerror("Error", f"Failed to update fees: {err}")
+        except ValueError:
+            messagebox.showerror("Error", "Total Paid and Total Fees must be valid numbers.")
+
+    # Labels and entry fields for fee updates
+    student_id_update_label = tk.Label(input_window, text="Student ID for Fee Update")
+    student_id_update_entry = tk.Entry(input_window)
+    total_paid_label = tk.Label(input_window, text="Total Paid")
+    total_paid_entry = tk.Entry(input_window)
+    total_fees_label = tk.Label(input_window, text="Total Fees")
+    total_fees_entry = tk.Entry(input_window)
+    update_button = tk.Button(input_window, text="Update Fees", command=update_fees_action)
+
+    # Layout in the input window
+    student_id_update_label.grid(row=0, column=0)
+    student_id_update_entry.grid(row=0, column=1)
+    total_paid_label.grid(row=1, column=0)
+    total_paid_entry.grid(row=1, column=1)
+    total_fees_label.grid(row=2, column=0)
+    total_fees_entry.grid(row=2, column=1)
+    update_button.grid(row=3, column=0, columnspan=2)
+
+# Function to view students
+def view_students():
+    try:
+        sql = """
+        SELECT s.id, s.name, s.class, s.section, s.admission_date,
+               s.total_paid, s.total_fees, s.total_fees - s.total_paid AS dues
+        FROM students s
+        """
+        mycursor.execute(sql)
+        result = mycursor.fetchall()
+
+        student_data = pd.DataFrame(result, columns=["ID", "Name", "Class", "Section", "Admission Date", "Total Paid", "Total Fees", "Dues"])
+        
+        student_table.delete(*student_table.get_children())
+
+        for index, row in student_data.iterrows():
+            student_table.insert("", tk.END, values=row.tolist())
+            
+    except mysql.connector.Error as err:
+        messagebox.showerror("Error", f"Failed to view students: {err}")
+
+# Function to delete a student
+def delete_student():
+    input_window = tk.Toplevel(root)
+    input_window.title("Delete Student")
+
+    def delete_student_action():
+        student_id = student_id_delete_entry.get()
+
+        if not student_id.isdigit():
+            messagebox.showerror("Error", "Please enter a valid student ID.")
+            return
+
+        try:
+            mycursor.execute("SELECT * FROM students WHERE id = %s", (student_id,))
+            if not mycursor.fetchone():
+                messagebox.showerror("Error", "Student ID does not exist.")
+                return
+
+            mycursor.execute("DELETE FROM students WHERE id = %s", (student_id,))
+            mydb.commit()
+
+            messagebox.showinfo("Success", "Student deleted successfully!")
+            input_window.destroy()
+            view_students()
+
+        except mysql.connector.Error as err:
+            mydb.rollback()
+            messagebox.showerror("Error", f"Failed to delete student: {err}")
+
+    # Labels and entry fields for student deletion
+    student_id_delete_label = tk.Label(input_window, text="Student ID for Deletion")
+    student_id_delete_entry = tk.Entry(input_window)
+    delete_button = tk.Button(input_window, text="Delete Student", command=delete_student_action)
+
+    # Layout in the input window
+    student_id_delete_label.grid(row=0, column=0)
+    student_id_delete_entry.grid(row=0, column=1)
+    delete_button.grid(row=1, column=0, columnspan=2)
+
+# Function to load students from Excel
+def load_students_from_excel():
+    try:
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
+        if not file_path:
+            return  # User canceled file selection
+
+        student_data = pd.read_excel(file_path)
+
+        if not {'ID', 'Name', 'Class', 'Section', 'Admission Date'}.issubset(student_data.columns):
+            messagebox.showerror("Error", "Excel file missing required columns.")
+            return
+
+        for index, row in student_data.iterrows():
+            sql = """
+            INSERT INTO students (id, name, class, section, admission_date)
+            VALUES (%s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                name = VALUES(name),
+                class = VALUES(class),
+                section = VALUES(section),
+                admission_date = VALUES(admission_date)
+            """
+            values = (row['ID'], row['Name'], row['Class'], row['Section'], row['Admission Date'])
+            mycursor.execute(sql, values)
+
+        mydb.commit()
+        messagebox.showinfo("Success", "Students loaded from Excel successfully!")
+        view_students()
+
+    except FileNotFoundError:
+        messagebox.showerror("Error", "Excel file not found.")
+    except Exception as err:
+        messagebox.showerror("Error", f"Failed to load students: {err}")
+
+# Function to export student data to CSV
+def export_to_csv():
+    try:
+        sql = """
+        SELECT s.id, s.name, s.class, s.section, s.admission_date,
+               s.total_paid, s.total_fees, s.total_fees - s.total_paid AS dues
+        FROM students s
+        """
+        mycursor.execute(sql)
+        result = mycursor.fetchall()
+
+        student_data = pd.DataFrame(result, columns=["ID", "Name", "Class", "Section", "Admission Date", "Total Paid", "Total Fees", "Dues"])
+
+        file_path = r"C:\Users\Dell\OneDrive\Desktop\students_export.csv"
+        student_data.to_csv(file_path, index=False)
+
+        messagebox.showinfo("Success", f"Student data exported to {file_path}")
+    except Exception as err:
+        messagebox.showerror("Error", f"Failed to export data: {err}")
+
+# Function to search for students by name or class
+def search_students():
+    search_term = search_entry.get()
+
+    sql = """
+    SELECT s.id, s.name, s.class, s.section, s.admission_date,
+           s.total_paid, s.total_fees, s.total_fees - s.total_paid AS dues
+    FROM students s
+    WHERE s.name LIKE %s OR s.class LIKE %s
+    """
+    search_value = f"%{search_term}%"
+    mycursor.execute(sql, (search_value, search_value))
+    result = mycursor.fetchall()
+
+    student_data = pd.DataFrame(result, columns=["ID", "Name", "Class", "Section", "Admission Date", "Total Paid", "Total Fees", "Dues"])
+    
+    student_table.delete(*student_table.get_children())
+    for index, row in student_data.iterrows():
+        student_table.insert("", tk.END, values=row.tolist())
+
+# Function to generate a report on total fees collected and dues
+def generate_report():
+    try:
+        sql = """
+        SELECT SUM(total_paid) as total_collected, SUM(total_fees - total_paid) as total_due
+        FROM students;
+        """
+        mycursor.execute(sql)
+        result = mycursor.fetchone()
+
+        total_collected, total_due = result
+        report_message = f"Total Fees Collected: {total_collected}\nTotal Dues: {total_due}"
+
+        messagebox.showinfo("Fee Report", report_message)
+    except mysql.connector.Error as err:
+        messagebox.showerror("Error", f"Failed to generate report: {err}")
+
+# Initialize Tkinter window
+root = tk.Tk()
+root.title("School Fees Management System")
+
+# Create a menu
+menu_bar = tk.Menu(root)
+root.config(menu=menu_bar)
+
+# File menu
+file_menu = tk.Menu(menu_bar, tearoff=0)
+menu_bar.add_cascade(label="File", menu=file_menu)
+file_menu.add_command(label="Add Student", command=add_student)
+file_menu.add_command(label="Delete Student", command=delete_student)
+file_menu.add_command(label="Update Fees", command=update_fees)
+file_menu.add_command(label="Load Students from Excel", command=load_students_from_excel)
+file_menu.add_command(label="Export to CSV", command=export_to_csv)
+file_menu.add_separator()
+file_menu.add_command(label="Generate Report", command=generate_report)
+file_menu.add_separator()
+file_menu.add_command(label="Exit", command=root.quit)
+
+# Student Table (Treeview)
+student_table = ttk.Treeview(root, columns=("ID", "Name", "Class", "Section", "Admission Date", "Total Paid", "Total Fees", "Dues"), show="headings")
+student_table.heading("ID", text="ID")
+student_table.heading("Name", text="Name")
+student_table.heading("Class", text="Class")
+student_table.heading("Section", text="Section")
+student_table.heading("Admission Date", text="Admission Date")
+student_table.heading("Total Paid", text="Total Paid")
+student_table.heading("Total Fees", text="Total Fees")
+student_table.heading("Dues", text="Dues")
+student_table.grid(row=2, column=0, columnspan=3)
+
+# Add search bar above the table
+search_label = tk.Label(root, text="Search Student")
+search_label.grid(row=1, column=0)
+search_entry = tk.Entry(root)
+search_entry.grid(row=1, column=1)
+search_button = tk.Button(root, text="Search", command=search_students)
+search_button.grid(row=1, column=2)
+
+# Run the program
+create_students_table()
+view_students()
+root.mainloop()
